@@ -1,4 +1,4 @@
-# GUI to Backend Integration Architecture
+﻿# GUI to Backend Integration Architecture
 
 This document details the connection points between the Frontend (ImGui/DirectX) and the Backend (AcquisitionController). It maps specific UI elements to the underlying C++ logic.
 

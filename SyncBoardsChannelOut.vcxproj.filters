@@ -175,5 +175,6 @@
     <None Include="implot\TODO.md">
       <Filter>Source Files\implot</Filter>
     </None>
+    <None Include="Doc.md" />
   </ItemGroup>
 </Project>

@@ -183,6 +183,10 @@
     <ClInclude Include="ProjectSetting.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="Doc.md">
+      <SubType>
+      </SubType>
+    </None>
     <None Include="implot\.gitignore" />
     <None Include="implot\LICENSE" />
     <None Include="implot\README.md" />
