@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="SyncBoardsChannelOut.vcxproj" Id="320aac91-39c9-4b3a-8ab5-b0c79bf48ce4" />
+</Solution>
