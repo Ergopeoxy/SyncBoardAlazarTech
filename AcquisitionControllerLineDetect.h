@@ -197,6 +197,7 @@ private:
     std::vector<double> m_cb_M1;
     std::vector<double> m_cb_M2;
     std::vector<double> m_cb_Img;
+	std::vector<double> m_cb_D;
     size_t m_cb_write_head;
 
     LineParams m_lineParams;

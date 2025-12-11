@@ -741,6 +741,7 @@ AcquisitionController::AcquisitionController() :
     m_cb_M1.resize(CIRC_BUFFER_SIZE, 0.0);
     m_cb_M2.resize(CIRC_BUFFER_SIZE, 0.0);
     m_cb_Img.resize(CIRC_BUFFER_SIZE, 0.0);
+	m_cb_D.resize(CIRC_BUFFER_SIZE, 0.0);
 
     memset(m_lineParams.leftright, -1, sizeof(m_lineParams.leftright));
     memset(m_lineParams.updown, -1, sizeof(m_lineParams.updown));
@@ -1000,11 +1001,11 @@ bool AcquisitionController::ProcessBufferData(AlazarDigitizer* board, U16* buffe
         // Access specific board's channel storage
         std::vector<std::vector<float>>& boardScope = m_latestScopeData[chunk.boardId];
 
-        // Ensure 3 channels exist (A, B, C)
-        if (boardScope.size() < 3)
+        // Ensure 4 channels exist (A, B, C, D)
+        if (boardScope.size() < 4)
         {
             std::cout << "size of boardscope was less than 3 (channels)";
-            boardScope.resize(3);
+            boardScope.resize(4);
         }
 
         // Resize vectors if needed
@@ -1012,8 +1013,22 @@ bool AcquisitionController::ProcessBufferData(AlazarDigitizer* board, U16* buffe
             boardScope[0].resize(totalSamples);
             boardScope[1].resize(totalSamples);
             boardScope[2].resize(totalSamples);
+            boardScope[3].resize(totalSamples);
         }
 
+
+
+
+        /*
+        double codeA = chunk.chA[i] >> BIT_SHIFT;
+        chunk.chA[i]: This is the raw 16-bit data from the digitizer (0 to 65535).
+
+        BIT_SHIFT (2): The ATS9440 is a 14-bit card, but the data is stored in a 16-bit container.
+
+        Alazar cards "left-align" the data to the Most Significant Bit (MSB). This means the 14 bits of data are at the top, and the bottom 2 bits are effectively zero or noise.
+
+        Right-shifting by 2 (>> 2) discards those empty bits and gives you the true 14-bit integer value (range 0 to 16383
+        */
 
 
 
@@ -1021,6 +1036,17 @@ bool AcquisitionController::ProcessBufferData(AlazarDigitizer* board, U16* buffe
         // Fill Data (Convert to Float Volts)
         const int BIT_SHIFT = 2; // Adjust based on bit-depth
         for (size_t i = 0; i < totalSamples; i++) {
+
+
+            /*
+            8191.5 (Midpoint):A 14-bit unsigned integer goes from 0 to 16383.The center (0 Volts) is halfway: $16383 / 2 = 8191.5
+            $.codeA - 8191.5 shifts the range to be centered around zero: [-8191.5 ... +8191.5].
+            Division by 8191.5:Dividing by the midpoint scales the result to be between -1.0 and +1.0.Example:Code 0 $\rightarrow$ $(0 - 8191.5) / 8191.5 = \mathbf{-1.0}$
+            (Negative Full Scale)Code 8192 $\rightarrow$ $(8192 - 8191.5) / 8191.5 \approx \mathbf{0.0}$ (Zero Volts)
+            Code 16383 $\rightarrow$ $(16383 - 8191.5) / 8191.5 = \mathbf{+1.0}$ (Positive Full Scale
+            */
+
+
             // ChA (Image)
             double codeA = chunk.chA[i] >> BIT_SHIFT;
             boardScope[0][i] = (float)((codeA - 8191.5) / 8191.5);
@@ -1032,8 +1058,26 @@ bool AcquisitionController::ProcessBufferData(AlazarDigitizer* board, U16* buffe
             // ChC (M2 / Ramp)
             double codeC = chunk.chC[i] >> BIT_SHIFT;
             boardScope[2][i] = (float)((codeC - 8191.5) / 8191.5);
+			// ChD (Depth)
+            double codeD = chunk.chD[i] >> BIT_SHIFT;
+            boardScope[3][i] = (float)((codeD - 8191.5) / 8191.5);
         }
+
+        /*
+        
+        Units: This effectively converts the raw data into "Percent of Input Range".
+        If your input range is set to $\pm 1V$, a value of 0.5 means 0.5 Volts.
+        If your input range is $\pm 400mV$, a value of 0.5 means 200mV
+        */
+
+
+
     }
+
+
+
+
+
 
     // Push to Save Queue
     /*
@@ -1434,6 +1478,7 @@ void AcquisitionController::DetectorThreadLoop()
             m_cb_Img[idx] = (double)chunk.chA[i];
             m_cb_M1[idx] = (double)chunk.chB[i];
             m_cb_M2[idx] = (double)chunk.chC[i];
+            m_cb_D[idx] = (double)chunk.chD[i];
         }
 
         size_t chunk_start_idx_in_cb = m_cb_write_head;
@@ -2443,6 +2488,7 @@ void AcquisitionController::SaveThreadLoop() {
                 if (!chunk.chA.empty() && m_fileStreams[f].is_open()) m_fileStreams[f].write((char*)chunk.chA.data(), chunk.chA.size() * 2);
                 if (!chunk.chB.empty() && m_fileStreams[f + 1].is_open()) m_fileStreams[f + 1].write((char*)chunk.chB.data(), chunk.chB.size() * 2);
                 if (!chunk.chC.empty() && m_fileStreams[f + 2].is_open()) m_fileStreams[f + 2].write((char*)chunk.chC.data(), chunk.chC.size() * 2);
+                if (!chunk.chD.empty() && m_fileStreams[f + 3].is_open()) m_fileStreams[f + 3].write((char*)chunk.chD.data(), chunk.chD.size() * 2);
             }
         }
     }

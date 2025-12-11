@@ -997,6 +997,7 @@ int main(int, char**)
                 static bool showChA = true;
                 static bool showChB = false; // M1
                 static bool showChC = false; // M2
+                static bool showChD = false;
 
                 // Board Selection
                 ImGui::Text("Board:"); ImGui::SameLine();
@@ -1008,8 +1009,8 @@ int main(int, char**)
                 // Channel Toggles
                 ImGui::Checkbox("Img (ChA)", &showChA); ImGui::SameLine();
                 ImGui::Checkbox("Fast M1 (ChB)", &showChB); ImGui::SameLine();
-                ImGui::Checkbox("Slow M2 (ChC)", &showChC);
-
+                ImGui::Checkbox("Slow M2 (ChC)", &showChC); ImGui::SameLine();
+                ImGui::Checkbox("Aux (ChD)", &showChD); ImGui::SameLine();
                 // Phase Adjustment Slider
                 ImGui::SameLine(); ImGui::Text(" | "); ImGui::SameLine();
                 ImGui::SetNextItemWidth(150);
@@ -1061,6 +1062,18 @@ int main(int, char**)
 
                 // ==============================
                 // 4. PLOTTING
+                // Note :
+                // ImVec4 stands for ImGui Vector 4. It holds four floating-point numbers typically used to represent RGBA (Red, Green, Blue, Alpha).
+
+               /* example (1.0f, 0.0f, 1.0f, 1.0f) :
+
+                    Red(1.0f) : 100 % (Full Red)
+
+                    Green(0.0f) : 0 % (No Green)
+
+                    Blue(1.0f) : 100 % (Full Blue)
+
+                    Alpha(1.0f) : 100 % (Fully Opaque / No Transparency*/
                 // ==============================
                 if (ImPlot::BeginPlot("Live Signal", ImVec2(-1, -1))) {
                     ImPlot::SetupAxes("Samples", "Volts");
@@ -1080,12 +1093,23 @@ int main(int, char**)
                             ImPlot::PlotLine("M1 (ChB)", dataB.data(), (int)dataB.size());
                         }
                     }
+
                     if (showChC) {
                         static std::vector<float> dataC;
                         g_AcqController.GetLatestScopeData(dataC, (U32)selectedBoard, 2);
                         if (!dataC.empty()) {
                             ImPlot::SetNextLineStyle(ImVec4(0.0f, 1.0f, 0.0f, 1.0f)); // Green
                             ImPlot::PlotLine("M2 (ChC)", dataC.data(), (int)dataC.size());
+                        }
+                    }
+
+                    if (showChD) {
+                        static std::vector<float> dataD;
+                        // Fetch Index 3 (0=A, 1=B, 2=C, 3=D)
+                        g_AcqController.GetLatestScopeData(dataD, (U32)selectedBoard, 3);
+                        if (!dataD.empty()) {
+                            ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.0f, 1.0f, 1.0f)); // Magenta
+                            ImPlot::PlotLine("Aux (ChD)", dataD.data(), (int)dataD.size());
                         }
                     }
 
@@ -1650,4 +1674,4 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY: ::PostQuitMessage(0); return 0;
     }
     return ::DefWindowProc(hWnd, msg, wParam, lParam);
-}//////////////////////////////////////////////////
+}////////////////////////////////////////////////////////////////////
