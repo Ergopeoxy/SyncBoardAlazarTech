@@ -2,6 +2,109 @@
 
 This document details the connection points between the Frontend (ImGui/DirectX) and the Backend (AcquisitionController). It maps specific UI elements to the underlying C++ logic.
 
+# System Architecture Details
+
+## 1. Detailed Code Mapping: "Which Section Calls What?"
+
+This section outlines the line-by-line connection between the GUI elements in `mainMultiThread.cpp` and the Backend functions in `AcquisitionControllerDetectLine`.
+
+### A. The Control Panel (Left Side)
+
+| User Action | GUI Code | Backend Call | Notes |
+| :--- | :--- | :--- | :--- |
+| **Clicks "Discover Boards"** | `if (ImGui::Button("Discover Boards"))` | `g_AcqController.DiscoverBoards();` | Initializes hardware handles. |
+| **Clicks "Apply Config"** | `if (ImGui::Button("Apply Config"))` | `g_AcqController.ConfigureAllBoards(g_boardConfig);` | Sends settings to Alazar cards. |
+| **Clicks "START ACQUISITION"** | `acquisitionThread = std::thread([acq]() { ... });` | `g_AcqController.RunAcquisition(acq);` | **Spawns a new thread** so the GUI doesn't freeze. |
+
+### B. Tab 1: Live Signals (Oscilloscope)
+
+#### Section: "3. DATA FETCHING (SYNCHRONIZED)"
+* **Purpose:** To get the waveform (ChA) and the red peak lines simultaneously so they don't jitter relative to each other.
+* **Backend Call:** `g_AcqController.GetLatestSnapshot(snapshotWave, snapshotPeaks);`
+* **Internal Mechanism:** This function locks `m_guiDataMutex`, copies `m_guiSnapshotWaveform` and `m_guiSnapshotPeaks`, and unlocks.
+
+#### Section: "B. Plot Other Channels" (ChB, ChC, ChD)
+* **Purpose:** To get the raw data for M1 (Fast), M2 (Slow), or Aux channels.
+* **Backend Call:** `g_AcqController.GetLatestScopeData(data, boardID, channelIndex);`
+
+#### Section: "Algorithm Tuning" (Sliders)
+* **Purpose:** To update the peak detection thresholds in real-time.
+* **Backend Call:** `g_AcqController.SetAlgoParams(tHigh, tLow, tDist);`
+
+### C. Tab 2: XY Scan Path (The Maze)
+
+#### Section: "2. FETCH DATA"
+* **Purpose:** To get X and Y data arrays to plot against each other.
+* **Backend Call:** `g_AcqController.GetLatestScopeData(dataX, ...)` and `GetLatestScopeData(dataY, ...)`
+* **Note:** This reuses the generic "Scope Data" getter but maps it to X and Y axes in the plot based on user selection.
+
+### D. Tab 3: Sync Check
+
+#### Section: "2. FETCH DATA & STATUS"
+* **Purpose:** To see the results of the "One-Shot" synchronization test.
+* **Backend Call:** `g_AcqController.GetSyncSnapshotMulti(boardID, channelID, ...)`
+* **Mechanism:** Accesses the specific `m_syncSnapshots` map populated by `RunSyncTest`.
+
+### E. Floating Window: Images (Heatmap)
+
+#### Function: `DrawImagesWindow()`
+* **Purpose:** To retrieve the fully constructed 2D image (1024x1024).
+* **Backend Call:** `g_AcqController.GetLatestImage(image2D);`
+* **Mechanism:** This copies the `m_finalImage` array (filled by the Generator Thread) into a local vector for ImPlot to render.
+
+---
+
+## 2. Core Function Definitions
+
+Below is a breakdown of the critical functions responsible for managing the data pipeline.
+
+### `RunAcquisition` (The Start Button)
+* **Role:** Main Entry Point
+* **Function:** Arms the hardware, configures DMA buffers, and enters the primary `while()` loop that waits for the hardware to signal "Buffer Full." It serves as the heartbeat of the ingestion process.
+
+### `ProcessBufferData` (The Mail Sorter)
+* **Role:** Raw Data Router
+* **Function:** Called immediately when a DMA transfer completes. It performs three critical tasks:
+    1.  De-interleaves the raw multiplexed stream into Channels A, B, C, and D.
+    2.  Updates the thread-safe vectors for the "Live Signals" GUI.
+    3.  Packages the data into `DataChunk` structs and pushes them into the `ProcessingQueue` and `SaveQueue`.
+
+### `DetectorThreadLoop` (The Gatekeeper / Consumer)
+* **Role:** Circular Buffer Manager & Analyst
+* **Function:** This thread sits in a loop waiting for data from the `ProcessingQueue`.
+    * **Writes:** It copies new data into the **Circular Buffer** (Ring Memory), handling the wrap-around logic.
+    * **Analyzes:** It runs the Peak Detection algorithm on Channel B (Fast Axis) to identify the start and stop indices of every scan line.
+    * **Notifies:** Once lines are found, it signals the Generator Thread.
+
+### `GeneratorThreadLoop` (The Painter)
+* **Role:** Image Reconstruction
+* **Function:** This thread sleeps until notified by the Detector.
+    * **Reads:** It looks into the Circular Buffer using the indices provided by the Detector.
+    * **Processes:** It grabs the pixels for a specific line, applies Bidirectional Reversal (if necessary), and maps the data to the correct Y-row based on the Channel C voltage.
+    * **Outputs:** Writes the final pixels to the 2D `m_finalImage` array for the Heatmap display.
+
+### `SaveThreadLoop` (The Archivist)
+* **Role:** Disk I/O
+* **Function:** A completely independent thread that pulls data from the `SaveQueue` and streams binary data to the SSD. It runs at a lower priority to ensure that file saving never blocks the live viewing or acquisition processes.
+
+### `FindLagByXCorr` (The Synchronizer)
+* **Role:** Calibration Math
+* **Function:** Performs a Cross-Correlation calculation between two signals (usually Channel A from two different boards). It returns the integer sample delay (Lag) required to align the boards perfectly.
+
+### `GetLatestScopeData` / `GetLatestImage` (The Reporters)
+* **Role:** GUI Accessors
+* **Function:** Thread-safe "Getter" functions that lock mutexes and return copies of the current data state. These allow the GUI (ImGui/DirectX) to render at 60 FPS without crashing the high-speed acquisition threads.
+
+---
+
+## 3. The Threading Model Summary
+
+* **Main Thread (GUI):** Runs `main.cpp`. It owns the `g_AcqController` object. It **polls** (asks for) data every frame (60 times a second).
+* **Acquisition Thread:** Spawned when you click "Start". It runs `RunAcquisition`. It pumps data from hardware to the Controller's queues.
+* **Helper Threads (Detector/Generator/Save):** Created inside the `AcquisitionController` constructor. They process data in the background and update the variables that the GUI eventually reads.
+
+
+
 ## 1. System Architecture Diagram
 
 
@@ -83,11 +186,8 @@ graph TD
     GetImg -.-> BackendState
 ```
 
-# Architecture Overview: High-Speed Acquisition System
 
-This document outlines the data flow and function roles within the `AcquisitionController` class, specifically focusing on the Circular Buffer implementation and threading model.
-
-## 1. Data Flow Diagram
+## 2. Data Flow Diagram
 
 The system follows a **Producer-Consumer** pattern with detached processing threads to ensure zero-latency acquisition.
 
@@ -126,7 +226,7 @@ graph TD
 ```
 
 
-# Technical Documentation: High-Speed Circular Buffer Architecture
+# Circular Buffer Architecture
 
 ## 1. Overview
 The core of this data acquisition software is a **Circular Buffer** (or Ring Buffer). This data structure acts as a high-speed, temporary storage reservoir that decouples the hardware (Producer) from the software processing (Consumer).
@@ -213,3 +313,42 @@ for (int i = 0; i < samples_to_write; i++) {
 
 // 4. Advance the head
 m_cb_write_head = (m_cb_write_head + samples_to_write) % CIRC_BUFFER_SIZE;
+```
+
+
+#### 2. Reading Data (The Consumer Logic)
+graph TD
+    %% Define the Incoming Data Source
+    subgraph Producer [Producer: DetectorThreadLoop]
+        Chunk[Incoming Data Chunk<br/>(e.g., 4096 samples from Queue)]
+    end
+
+    %% Define the Circular Buffer Structure
+    subgraph CircularBuffer ["The Circular Buffer (m_cb_Img)"]
+        direction LR
+        %% Conceptualizing linear memory as segments for visualization
+        MemStart[Index 0] --- MemOld[Processed Data] --- MemReadGen[Generator Reading Here] --- MemReadDet[Detector Reading Here] --- MemWrite[Write Head <br/>(Currently Writing)] --- MemEmpty[Free Space] --- MemEnd["Index N-1<br/>(CIRC_BUFFER_SIZE)"]
+        
+        %% The crucial Wrap-Around link
+        MemEnd -.->|"Wrap-Around Logic (%)"| MemStart
+    end
+
+    %% Define Pointers/Heads
+    WriteHead(m_cb_write_head) --> MemWrite
+    ReadGenPtr(Generator Read Ptr) --> MemReadGen
+    ReadDetPtr(Detector Read Ptr) --> MemReadDet
+
+    %% Data Flow Action
+    Chunk -->|"memcpy into buffer<br/>at write_head index"| MemWrite
+
+    %% Styling for visual clarity
+    classDef memory fill:#e1e1e1,stroke:#333,stroke-width:2px;
+    classDef activeWrite fill:#9f9,stroke:#333,stroke-width:2px;
+    classDef activeRead fill:#ccf,stroke:#333,stroke-width:2px;
+    classDef processed fill:#f9f,stroke:#333,stroke-width:1px,stroke-dasharray: 5 5;
+
+    class MemStart,MemEmpty,MemEnd memory;
+    class MemWrite activeWrite;
+    class MemReadGen,MemReadDet activeRead;
+    class MemOld processed; 
+ ```
